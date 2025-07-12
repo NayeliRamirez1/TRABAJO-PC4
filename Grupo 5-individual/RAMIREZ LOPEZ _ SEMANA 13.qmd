@@ -1,0 +1,249 @@
+---
+title: "RAMIREZ LOPEZ _ SEMANA 13"
+format: html
+editor: visual
+---
+
+## Instalar y cargar los paquetes
+
+```{r}
+library(factoextra)
+library(cluster)
+library(here)
+library(rio)
+library(tidyverse)
+```
+
+# 1.Análisis de agrupamiento herarquico (Hierarchical Clustering)
+
+## 1.1 Sobre el problema para esta sesión
+
+El dataset cirrosis contiene información de 418 pacientes con diagnóstico de cirrosis hepática que fueron seguidos clínicamente durante varios años. Esta información proviene de un estudio clínico realizado con el objetivo de analizar la progresión de la enfermedad hepática bajo diferentes tratamientos.
+
+El objetivo de este ejercicio es aplicar el método de agrupamiento jerárquico para identificar grupos de pacientes que compartan características similares en cuanto a su estado de salud basal, lo que permitirá proponer posibles perfiles clínicos, evaluar diferencias entre tratamientos o identificar patrones de riesgo en la progresión de la enfermedad hepática.
+
+## 1.2 El dataset para esta sesión
+
+Para ilustrar el proceso de análisis usaremos el dataset llamado `cirrosis_data`, el cual contiene información de 418 pacientes con diagnóstico de cirrosis hepática seguidos clínicamente durante varios años. Este dataset incluye tanto variables clínicas como resultados de laboratorio, lo que permite explorar patrones de salud hepática a partir de múltiples dimensiones.
+
+Las variables incluidas en este conjunto de datos son: edad (año de nacimiento), sexo (masculino/femenino), días de seguimiento (número de días observados clínicamente), estado al final del seguimiento (censurado, fallecido o trasplantado) y medicamento recibido (D-penicilamina u otro). También se incluyen variables clínicas como ascitis, hepatomegalia, presencia de aracnoides y edema, todas ellas categóricas.
+
+Entre los biomarcadores bioquímicos y hematológicos considerados se encuentran la bilirrubina (mg/dL), colesterol (mg/dL), albúmina (g/dL), cobre sérico (mcg/dL), fosfatasa alcalina (U/L), SGOT (U/L), triglicéridos (mg/dL), recuento de plaquetas( μL) y tiempo de protrombina (segundos).
+
+Finalmente, se incluye una variable de interés clínica llamada etapa, que clasifica a los pacientes según la severidad de su enfermedad hepática en cuatro categorías: Etapa 1, Etapa 2, Etapa 3 y Etapa 4. Esta variable puede ser útil para validar o interpretar los grupos encontrados mediante técnicas de agrupamiento.
+
+### 1.2.1 Importando los datos-
+
+```{r}
+cirrosis_data <- import(here("data", "cirrosis.csv"))
+```
+
+## 1.3 Preparación de los datos
+
+### 1.3.1 Solo datos numéricos
+
+Para el análisis de agrupamiento jerárquico de esta sesión usaremos solo variables numéricas. Es posible emplear variables categóricas en esta técnica, pero esto no será cubierto aquí. El código que se muestra a continuación elimina las variables categóricas como Sexo, Estado, Medicamento, Ascitis, Edema, entre otras. La variable ID será usada como identificador de los participantes.
+
+```{r}
+cirrosis_data_1 <- cirrosis_data |>
+  select(ID,Edad,Bilirrubina,Colesterol,Albumina, Cobre, Fosfatasa_Alcalina,
+    SGOT, Trigliceridos, Plaquetas, Tiempo_Protrombina) |>
+  drop_na() |>   #Usamos drop_na() para eliminar filas con datos faltantes
+  column_to_rownames("ID")
+```
+
+### 1.3.2 La importancia de estandarizar
+
+Antes de realizar el análisis de agrupamiento jerárquico es fundamental estandarizar las variables numéricas, ya que estas provienen de diferentes escalas y unidades. Por ejemplo, en este dataset la bilirrubina se mide en mg/dL, el cobre en mcg/dL, y las plaquetas en miles por microlitro. Sin una estandarización previa, las variables con rangos numéricos mayores pueden influir de forma desproporcionada en el cálculo de distancias entre pacientes.
+
+La estandarización transforma todas las variables a una escala común con media cero y desviación estándar uno, permitiendo que cada variable contribuya de manera equitativa al análisis. Esto es especialmente importante porque el agrupamiento se basa en cálculos de distancia entre los pacientes, y sin esta transformación los resultados podrían estar sesgados.
+
+```{r}
+cirrosis_data_escalado = scale(cirrosis_data_1)
+```
+
+Un vistazo a los datos antes del escalamiento:
+
+```{r}
+head(cirrosis_data_1)
+```
+
+y un vistazo después del escalamiento:
+
+```{r}
+head(cirrosis_data_escalado)
+```
+
+El cuadro presentado muestra un extracto de las primeras filas del conjunto de datos clínicos luego de aplicar el proceso de escalamiento (estandarización). En este paso, todas las variables numéricas han sido transformadas para que tengan media cero y desviación estándar uno.
+
+Este procedimiento es crucial para el análisis de agrupamiento, ya que asegura que todas las variables independientemente de sus unidades originales contribuyan de manera equitativa al cálculo de distancias entre pacientes. Por ejemplo, sin este paso, una variable como el colesterol (que puede tener valores en cientos) podría dominar sobre variables como la albúmina, que se mide en una escala más pequeña.
+
+Cada valor en la tabla representa ahora la distancia en desviaciones estándar respecto al promedio de la variable. Por ejemplo:
+
+Un valor de 2.46 en bilirrubina indica que ese paciente tiene un nivel de bilirrubina aproximadamente 2.5 desviaciones estándar por encima del promedio del grupo.
+
+Un valor de −2.26 en tiempo de protrombina indica que ese paciente tiene un valor muy por debajo del promedio, lo que podría tener implicancias clínicas importantes.
+
+Esta matriz estandarizada (cirrosis_data_escalado) es la que se ha utilizado en todos los análisis posteriores: cálculo de distancias, k-means, PCA y visualización de clústeres.
+
+## 1.4 Cálculo de distancias
+
+Dado que uno de los pasos clave en el agrupamiento es identificar “pacientes similares”, necesitamos definir qué tan “similares” son en términos de distancia entre ellos. Esta distancia se calculará para cada par posible de pacientes en nuestro dataset de cirrosis, a partir de las variables clínicas seleccionadas y estandarizadas.
+
+Por ejemplo, si tuviéramos tres pacientes A, B y C, la distancia se calcularía entre A y B, A y C, y B y C. Estas distancias representan qué tan cercanos o lejanos están entre sí en el espacio multivariado definido por sus valores clínicos.
+
+```{r}
+dist_cirrosis_data <- dist(cirrosis_data_escalado, method = "euclidean")
+```
+
+## 1.4.1 Visualizando las distancias euclidianas con un mapa de calor
+
+Una forma de visualizar si existen patrones de agrupamiento es usando mapas de calor (heatmaps). En R usamos la función `fviz_dist()` del paquete factoextra para crear un mapa de calor.
+
+```{r}
+fviz_dist(dist_cirrosis_data)
+```
+
+Se pueden observar patrones verticales y horizontales repetitivos que indican la posible existencia de subgrupos o clusters. Estos aparecen como bloques más homogéneos (líneas o cuadros más claros) que se repiten a lo largo del mapa
+
+Aunque no se observa una segmentación muy marcada (como bloques cuadrados bien definidos), sí hay zonas de mayor densidad clara, lo cual sugiere que sí existen grupos de pacientes con características clínicas similares
+
+## 1.5 El método de agrupamiento: función de enlace (linkage)
+
+El agrupamiento jerárquico es un método que comienza uniendo a los pacientes con perfiles clínicos más parecidos entre sí, por lo que resulta útil como técnica exploratoria inicial. No basta con calcular las distancias entre todos los pares de pacientes: una vez que se forma un grupo (clúster), es necesario decidir cómo medir la distancia entre este grupo y los demás grupos o pacientes aún no agrupados.
+
+Existen distintas formas de hacerlo, y cada una corresponde a un tipo diferente de agrupamiento jerárquico. Estas formas se conocen como métodos de enlace (linkage). La función de enlace toma la información de distancias calculada con dist() y agrupa pares de pacientes según su similitud. Luego, los nuevos grupos formados se enlazan entre sí para construir clústeres más grandes, y el proceso se repite hasta que todos los pacientes queden agrupados en una única estructura jerárquica.
+
+Entre los métodos más comunes se encuentran: enlace completo (máximo), enlace simple (mínimo), enlace promedio, enlace de centroide y el método de varianza mínima de Ward. En este caso, utilizaremos el método de Ward, que busca minimizar la variación dentro de cada grupo, lo cual es adecuado para identificar grupos homogéneos de pacientes con características clínicas similares.
+
+```{r}
+dist_link_cirrosis_data <- hclust(d = dist_cirrosis_data, method = "ward.D2")
+```
+
+## 1.6 Dendrogramas para la visualización de patrones
+
+Los dendrogramas es una representación gráfica del árbol jerárquico generado por la función `hclust()`.
+
+```{r}
+fviz_dend(dist_link_cirrosis_data, cex = 0.5)
+```
+
+Un dendrograma es como un árbol genealógico para los grupos (clústeres) de pacientes. En este caso, muestra cómo los pacientes con perfiles clínicos similares (según sus variables estandarizadas como bilirrubina, albúmina, cobre, plaquetas, etc.) se van uniendo en grupos a medida que aumenta el nivel de agrupación.
+
+En la parte inferior del gráfico, cada línea vertical representa un paciente considerado como grupo individual. A medida que se asciende en el dendrograma, los pacientes más parecidos entre sí se agrupan primero, y luego esos grupos se unen con otros formando clústeres más grandes.
+
+Lo más importante de observar es la altura a la que se produce cada unión: cuanto más baja es esa altura, mayor es la similitud entre los pacientes que se están agrupando. En cambio, agrupaciones a mayor altura representan fusiones entre grupos que son más diferentes entre sí.
+
+Este dendrograma sugiere que existe cierta estructura en los datos, con varios subgrupos de pacientes que podrían compartir perfiles clínicos comunes. En los siguientes pasos, cortaremos el dendrograma en un número óptimo de clústeres para interpretarlos mejor.
+
+## 1.7 ¿Cúantos grupos se formaron en el dendrograma?
+
+Uno de los desafíos del agrupamiento jerárquico es que no indica automáticamente cuántos grupos existen ni dónde cortar el dendrograma para formar clústeres. Esta decisión depende de la interpretación visual del dendrograma y del criterio clínico o estadístico del investigador.
+
+En nuestro caso, al observar el dendrograma, se identifica una estructura clara que sugiere la existencia de tres grupos principales de pacientes, con perfiles clínicos diferenciados. A continuación, usamos el argumento k = 3 para cortar el dendrograma en tres clústeres, asignando un color distintivo a cada grupo.
+
+```{r}
+fviz_dend(dist_link_cirrosis_data,
+          k = 3,
+          cex = 0.5,
+          k_colors = c("#FF69B4", "#87CEFA", "#8B0000"),
+          color_labels_by_k = TRUE,
+          rect = TRUE)
+```
+
+Cada rama representa un grupo de pacientes que comparten mayor similitud entre sí.
+
+Los rectángulos punteados delimitan visualmente los tres clústeres detectados.
+
+El grupo celeste parece abarcar un gran número de observaciones (pacientes), lo que puede indicar un perfil clínico predominante en la muestra.
+
+El grupo rosado contiene un conjunto más compacto de pacientes, posiblemente con un patrón clínico distinto y más homogéneo.
+
+El grupo rojo oscuro agrupa pacientes que se diferencian claramente de los otros dos, especialmente por la altura a la que se conectan al resto del árbol (mayor disimilitud).
+
+# 2 Agrupamiento con el algoritmo K-Means
+
+El método de agrupamiento (usando el algoritmo) K-means es la técnica de machine learning más utilizado para dividir un conjunto de datos en un número determinado de k grupos (es decir, k clústeres), donde k representa el número de grupos predefinido por el investigador. Esto contrasta con la técnica anterior, dado que aquí sí iniciamos con un grupo pre-definido cuya idoniedad (de los grupos) puede ser evaluado. En detalle, el esta técnica clasifica a los objetos (participantes) del dataset en múltiples grupos, de manera que los objetos dentro de un mismo clúster sean lo más similares posible entre sí (alta similitud intragrupo), mientras que los objetos de diferentes clústeres sean lo más diferentes posible entre ellos (baja similitud intergrupo). En el agrupamiento k-means, cada clúster se representa por su centro (centroide), que corresponde al promedio de los puntos asignados a dicho clúster.
+
+Aquí como funciona el algoritmo de K-Means
+
+1.  Indicar cuántos grupos (clústeres) se quieren formar. Por ejemplo, si se desea dividir a los pacientes en 3 grupos según sus características clínicas, entonces K=3.
+2.  Elegir aleatoriamente K casos del conjunto de datos como centros iniciales. Por ejemplo, R selecciona al azar 3 pacientes cuyas características (edad, IMC, creatinina, etc.) servirán como punto de partida para definir los grupos.
+3.  Asignar cada paciente al grupo cuyo centro esté más cerca, usando la distancia euclidiana. Es como medir con una regla cuál centroide (paciente promedio) está más próximo a cada paciente en función de todas sus variables.
+4.  Calcular un nuevo centro para cada grupo. Es decir, calcular el promedio de todas las variables de los pacientes que quedaron en ese grupo. Por ejemplo, si en el grupo 1 quedaron 40 pacientes, el nuevo centroide será el promedio de la edad, IMC, creatinina, etc., de esos 40 pacientes. Este centroide es un conjunto de valores (uno por cada variable).
+5.  Repetir los pasos 3 y 4 hasta que los pacientes dejen de cambiar de grupo o hasta alcanzar un número máximo de repeticiones (en R, por defecto son 10 repeticiones). Esto permitirá que los grupos finales sean estables.
+
+## 2.1 El problema y dataset para este ejercicio
+
+Usaremos el mismo dataset y el mismo problema que el que empleamos en el ejercicio anterior (para Agrupamiento Jerárquico).
+
+## 2.2 Estimando el número óptimo de clusters
+
+Como indiqué arriba, el método de agrupamiento k-means requiere que el usuario especifique el número de clústeres (grupos) a generar. Una pregunta fundamental es: ¿cómo elegir el número adecuado de clústeres esperados (k)?
+
+Aquí muestro una solución sencilla y popular: realizar el agrupamiento k-means probando diferentes valores de k (número de clústeres). Luego, se grafica la suma de cuadrados dentro de los clústeres (WSS) en función del número de clústeres. En R, podemos usar la función fviz_nbclust() para estimar el número óptimo de clústeres.
+
+Primero escalamos los datos:
+
+```{r}
+cirrosis_data_escalado = scale(cirrosis_data_1)
+```
+
+Ahora graficamos la suma de cuadrados dentro de los gráficos
+
+```{r}
+fviz_nbclust(cirrosis_data_escalado, kmeans, nstart = 25, method = "wss") + 
+  geom_vline(xintercept = 3, linetype = 2)
+```
+
+En el eje X se encuentra el número de clústeres (k) evaluado, desde 1 hasta 10.
+
+En el eje Y se muestra la suma total de cuadrados dentro de los clústeres (WSS), que mide la compacidad de los grupos: cuanto menor sea, más homogéneos son los clústeres.
+
+La gráfica tiene una caída pronunciada entre k = 1 y k = 3, indicando una mejora importante en la calidad del agrupamiento al pasar de 1 a 3 grupos.
+
+Después de k = 3, la disminución es más lenta y progresiva, lo que sugiere que agregar más clústeres no aporta tanta mejora significativa.
+
+## 2.3 Cálculo del agrupamiento k-means
+
+Dado que el resultado final del agrupamiento k-means es sensible a las asignaciones aleatorias iniciales, se especifica el argumento nstart = 25. Esto significa que R intentará 25 asignaciones aleatorias diferentes y seleccionará la mejor solución, es decir, aquella con la menor variación dentro de los clústeres. El valor predeterminado de nstart en R es 1. Sin embargo, se recomienda ampliamente utilizar un valor alto, como 25 o 50, para obtener un resultado más estable y confiable. El valor empleado aquí, fue usado para determinar el número de clústeres óptimos.
+
+```{r}
+set.seed(123)
+km_res <- kmeans(cirrosis_data_escalado, 3, nstart = 25)
+```
+
+```{r}
+km_res
+```
+
+El primer grupo reúne a pacientes que muestran mayores signos de deterioro hepático. Presentan valores bajos de albúmina y plaquetas, junto con un tiempo de protrombina más prolongado, lo que indica una capacidad reducida del hígado para sintetizar proteínas esenciales. Estos hallazgos sugieren un perfil clínico más comprometido, posiblemente en fases avanzadas de la enfermedad.
+
+El segundo grupo es el más numeroso y se caracteriza por tener valores más equilibrados en la mayoría de los indicadores. Este perfil parece representar a pacientes en un estado más estable o compensado, quizás con mejor respuesta al tratamiento o en etapas más tempranas de la enfermedad. Podría considerarse el “punto medio” de los tres clústeres.
+
+Por otro lado, el tercer grupo destaca por tener niveles más elevados de colesterol, cobre, triglicéridos y enzimas hepáticas, como la SGOT y la fosfatasa alcalina. Este patrón sugiere un perfil metabólico o inflamatorio más activo, y podría estar relacionado con variantes específicas de cirrosis, como formas colestásicas o de origen autoinmune. Son pacientes que no presentan tanta insuficiencia funcional, pero sí una actividad bioquímica alterada que requiere atención diferenciada.
+
+## 2.4 Visualización de los clústeres k-means
+
+Al igual que en el análisis anterior, los pacientes agrupados por el algoritmo k-means se pueden representar en un gráfico de dispersión, coloreando cada punto según el grupo al que pertenece. El desafío radica en que el conjunto de datos contiene muchas variables clínicas, lo cual plantea la pregunta de qué variables elegir para representar en los ejes X e Y del gráfico.
+
+Una solución práctica es reducir la dimensionalidad del dataset mediante una técnica como el Análisis de Componentes Principales (PCA). Este método transforma las variables originales en un nuevo sistema de coordenadas basado en componentes principales, que retienen la mayor parte de la variabilidad de los datos. Así, es posible visualizar los clústeres en dos dimensiones sin perder demasiada información.
+
+Para este propósito, utilizamos la función fviz_cluster() del paquete factoextra, que permite representar gráficamente los grupos formados por el algoritmo k-means. Esta función requiere como argumentos los resultados del k-means (km_res) y los datos estandarizados sobre los que se aplicó el modelo (cirrosis_data_escalado).
+
+```{r}
+fviz_cluster(
+  km_res,
+  data = cirrosis_data_escalado,
+  palette = c("#FF69B4", "#87CEFA", "#8B0000"),  
+  ellipse.type = "euclid",
+  repel = TRUE,
+  ggtheme = theme_minimal()
+)
+```
+
+En el gráfico resultante, cada punto representa a un paciente del estudio. Las coordenadas de estos puntos han sido generadas por un análisis de componentes principales (PCA), el cual resume toda la información de las variables clínicas en dos nuevas dimensiones principales. Estas dimensiones permiten observar de manera visual cómo se distribuyen los pacientes en función de su similitud clínica.
+
+El propósito de este gráfico es facilitar la visualización de los tres grupos de pacientes identificados previamente por el algoritmo k-means. Los colores usados (rosado, celeste y rojo oscuro) permiten distinguir fácilmente los clústeres formados. Además, las elipses indican la concentración y dispersión de los grupos.
+
+Como se observa, los grupos están bien separados espacialmente, lo cual indica que los clústeres capturan diferencias reales entre pacientes. Por ejemplo, el grupo en color celeste se encuentra concentrado cerca del origen, mientras que el grupo rosado se aleja hacia la parte superior derecha y el grupo rojo oscuro hacia la inferior izquierda. Esto sugiere perfiles clínicos claramente diferenciados entre ellos.

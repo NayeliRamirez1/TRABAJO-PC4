@@ -1,0 +1,348 @@
+---
+title: "RAMIREZ LOPEZ _ SEMANA 14"
+format: html
+editor: visual
+---
+
+ESTUDIANTE: Nayelli Angie Ramírez López
+
+DATA: CIRROSIS
+
+## Instalar y cargar los paquetes
+
+En caso no tener un paquete instalar el paquete necesario
+
+```{r}
+library(mice)
+library(tidyverse)
+library(here)
+library(rio)
+library(ggmice)
+library(gtsummary)
+```
+
+## El dataset para este ejercicio
+
+Para ilustrar el proceso de imputación múltiple de datos, utilizaremos el conjunto de datos cirrosis.\
+Este dataset incluye información de 418 pacientes diagnosticados con cirrosis hepática.\
+Las variables registradas comprenden el estado vital al final del seguimiento (fallecido, censurado,
+
+```{r}
+
+```
+
+trasplante), el tipo de tratamiento recibido (D_penicilamina o Placebo), la edad (en días), el sexo (hombre o mujer), así como síntomas clínicos como ascitis, hepatomegalia, presencia de aracnoides y edema.
+
+Además, se incluyen múltiples parámetros bioquímicos y hematológicos, tales como los niveles de bilirrubina, colesterol, albúmina, cobre, fosfatasa alcalina, SGOT, triglicéridos, plaquetas y el tiempo de protrombina, entre otros. También se registra la etapa clínica de la enfermedad hepática.
+
+Cargando los datos
+
+```{r}
+data_cirrosis <- import(here("data", "cirrosis.csv"))
+```
+
+Un vistazo a los datos
+
+```{r}
+head(data_cirrosis)
+```
+
+## Realizando la imputación de datos
+
+### ¿Donde estan los valores perdidos?
+
+Es importante saber en qué variables se encuentran los datos antes de iniciar la inputación. Una forma rápida es usando la función `colSums()` es `is.na()`.
+
+```{r}
+colSums(is.na(data_cirrosis))
+```
+
+-   Las variables con más del 100 de valores perdidos (como Ascitis, Hepatomegalia, SGOT) deben imputarse cuidadosamente, usando métodos adecuados para variables categóricas o continuas.
+
+<!-- -->
+
+-    Variables como Plaquetas o Tiempo_Protrombina, con pocos valores perdidos, podrían imputarse con más precisión.
+
+Este análisis es un paso crucial previo a la imputación múltiple con mice.
+
+Incluso mejor, podemos visualizar los datos perdidos en un mapa de calor usando la función `plot_pattern()` de **ggmice**.
+
+```{r}
+data_cirrosis |>
+  select(
+    Medicamento,
+    Ascitis,
+    Hepatomegalia,
+    Aracnoides,
+    Colesterol,
+    Cobre,
+    Fosfatasa_Alcalina,
+    SGOT,
+    Trigliceridos,
+    Plaquetas,
+    Tiempo_Protrombina,
+    Etapa
+  ) |>
+  ggmice::plot_pattern(
+    square = TRUE,
+    rotate = TRUE
+  )
+```
+
+El número total de valores perdidos en el dataset data_cirrosis es de 1033. Las variables con más datos faltantes son Trigliceridos (136), Colesterol (134), Cobre (108), así como Medicamento, Ascitis, Hepatomegalia, Aracnoides, Fosfatasa_Alcalina y SGOT, todas con 106 valores perdidos. Otras variables como Plaquetas, Tiempo_Protrombina y Etapa también presentan algunos datos faltantes.
+
+El gráfico generado por ggmice::plot_pattern() muestra que 276 pacientes tienen datos completos, mientras que el resto presenta combinaciones variadas de valores perdidos. Esto indica que la ausencia de datos no sigue un patrón completamente aleatorio, por lo que es necesario aplicar técnicas de imputación múltiple para no perder información útil en los análisis posteriores.
+
+### Comparación de participantes con y sin valores perdidos
+
+Una buena práctica antes de iniciar la imputación de datos es también evaluar cómo difieren los valores de otras variables entre el grupo de participantes con valores perdidos y el grupo sin valores perdidos. Esto puede darnos una idea de si la imputación es realmente necesaria o si sería válido aplicar un análisis por casos completos.
+
+Por ejemplo, si la distribución de otras variables es similar entre los grupos con y sin datos faltantes, podría no ser indispensable imputar. En cambio, si existen diferencias sistemáticas, la imputación se vuelve necesaria para evitar sesgos.
+
+Evaluaremos esto en nuestro dataset para las variables Trigliceridos y Colesterol, que son dos de las que presentan mayor cantidad de datos perdidos.
+
+```{r}
+# Comparación según TRIGLICÉRIDOS
+tabla_trigliceridos <- data_cirrosis |>
+  dplyr::select(
+    Edad, Sexo, Medicamento, Ascitis, Hepatomegalia, Aracnoides,
+    Albumina, Bilirrubina, Colesterol, Trigliceridos, SGOT, Etapa
+  ) |>
+  mutate(missing = factor(
+    is.na(Trigliceridos),
+    levels = c(FALSE, TRUE),
+    labels = c("Sin valores perdidos", "Con valores perdidos")
+  )) |>
+  tbl_summary(
+    by = missing,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    )
+  ) |>
+  modify_header(label = "**Variable**",
+                all_stat_cols() ~ "**{level}**<br>N = {n} ({style_percent(p, digits = 1)}%)") |>
+  modify_caption("Características de los participantes según valor perdido en **Trigliceridos**") |>
+  bold_labels()
+```
+
+```{r}
+# Comparación según COLESTEROL
+tabla_colesterol <- data_cirrosis |>
+  dplyr::select(
+    Edad, Sexo, Medicamento, Ascitis, Hepatomegalia, Aracnoides,
+    Albumina, Bilirrubina, Trigliceridos, Colesterol, SGOT, Etapa
+  ) |>
+  mutate(missing = factor(
+    is.na(Colesterol),
+    levels = c(FALSE, TRUE),
+    labels = c("Sin valores perdidos", "Con valores perdidos")
+  )) |>
+  tbl_summary(
+    by = missing,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    )
+  ) |>
+  modify_header(label = "**Variable**",
+                all_stat_cols() ~ "**{level}**<br>N = {n} ({style_percent(p, digits = 1)}%)") |>
+  modify_caption("Características de los participantes según valor perdido en **Colesterol**") |>
+  bold_labels()
+```
+
+```{r}
+# Fusión de ambas tablas
+tabla <- tbl_merge(
+  tbls = list(tabla_trigliceridos, tabla_colesterol),
+  tab_spanner = c("**Trigliceridos**", "**Colesterol**")
+)
+```
+
+```{r}
+tabla
+```
+
+Se analizaron las diferencias entre los pacientes que tienen y no tienen datos faltantes en las variables Trigliceridos y Colesterol.
+
+En Trigliceridos, el 32.5% de los pacientes no tiene registrado su valor. Estos pacientes son, en promedio, un poco mayores que los que sí tienen el dato. Además, hay menos hombres en este grupo y no se tiene información sobre el tratamiento recibido ni sobre síntomas clínicos como ascitis, hepatomegalia o aracnoides, lo que indica que faltan varias variables al mismo tiempo.
+
+Algo similar ocurre con Colesterol, donde el 32.1% de los pacientes presenta datos faltantes. También son ligeramente mayores, hay menos hombres y nuevamente faltan los mismos datos clínicos y de tratamiento. En ambos casos, se repite el patrón de que cuando falta una variable, también suelen faltar otras.
+
+Los valores de laboratorio como Albúmina, Bilirrubina y SGOT son parecidos entre los dos grupos. La distribución de las etapas de la enfermedad hepática (de Etapa 1 a 4) también se mantiene similar, sin diferencias grandes.
+
+### ¿Qué variables debo incluir en el proceso de imputación?
+
+Debemos incluir todas las variables que se van a usar en los análisis posteriores, incluso aquellas que no tienen datos faltantes. Esto se debe a que el modelo de imputación debe ser tan completo como el análisis que haremos después. Si dejamos fuera variables importantes, podríamos perder información útil para estimar correctamente los valores perdidos.
+
+Además, aunque algunas variables no tengan valores faltantes, es buena idea incluirlas porque pueden ayudar a predecir mejor los valores que faltan. También hay que asegurarse de que las variables categóricas estén en formato factor, ya que así lo requiere el paquete mice.
+
+```{r}
+input_data <- data_cirrosis |>
+  dplyr::select(
+    Edad, Sexo, Medicamento, Ascitis, Hepatomegalia, Aracnoides,
+    Albumina, Bilirrubina, Colesterol, Trigliceridos,
+    Cobre, Fosfatasa_Alcalina, SGOT, Plaquetas, Tiempo_Protrombina,
+    Etapa
+  ) |>
+  mutate(
+    Sexo = as.factor(Sexo),
+    Medicamento = as.factor(Medicamento),
+    Ascitis = as.factor(Ascitis),
+    Hepatomegalia = as.factor(Hepatomegalia),
+    Aracnoides = as.factor(Aracnoides),
+    Etapa = as.factor(Etapa)
+  )
+```
+
+### 4.4 La función `mice()` para imputar datos
+
+Para imputar datos utilizaremos la función mice() del paquete del mismo nombre. Entre sus argumentos, debemos especificar:
+
+-   el número de imputaciones con m,
+-   una semilla (seed) para que los resultados sean reproducibles, y
+-   el método de imputación con method.
+
+Con respecto a este último argumento, emplearemos el método "pmm" para variables continuas y "logreg" para variables binarias. Para las variables que no presentan valores perdidos, simplemente se colocan comillas vacías ("").
+
+```{r}
+names(input_data)
+```
+
+```{r}
+data_imputada <- mice(
+  input_data,
+  m = 20,
+  method = c(
+    "",         
+    "logreg",   
+    "logreg",  
+    "logreg",   
+    "logreg",  
+    "logreg",  
+    "pmm",      
+    "pmm",  
+    "pmm",     
+    "pmm",      
+    "pmm",      
+    "pmm",      
+    "pmm",      
+    "pmm",     
+    "pmm",      
+    "polyreg"   
+  ),
+  maxit = 20,
+  seed = 123,
+  print = FALSE
+)
+```
+
+```{r}
+data_imputada
+```
+
+Cada variable se imputó con un método apropiado. Las variables numéricas como colesterol, triglicéridos, cobre, fosfatasa alcalina, SGOT, plaquetas y tiempo de protrombina usaron el método "pmm", que es ideal para datos continuos. Las variables categóricas como ascitis, hepatomegalia, aracnoides y medicamento usaron "logreg", que aplica regresión logística. La variable de etapa de enfermedad, al tener más de dos niveles, se imputó con el método "polyreg". Variables como edad, sexo, albúmina y bilirrubina no tenían datos faltantes, por lo que no se imputaron y se dejaron en blanco.
+
+La matriz de predictores muestra qué variables fueron usadas para imputar otras. Por ejemplo, edad no fue imputada pero sí se usó para predecir el resto. En cambio, variables como ascitis o hepatomegalia fueron tanto imputadas como utilizadas como predictoras. Esto indica que se aprovechó al máximo la información disponible para estimar los valores faltantes de forma precisa.
+
+## 5 Analizando los datos imputados
+
+Antes de realizar análisis con el dataset completo, es importante revisar cómo quedaron los datos imputados. La idea es comprobar si los valores imputados son razonables y están dentro de un rango similar al de los valores reales observados.\
+Esto se puede visualizar fácilmente con un gráfico de cajas (boxplot) que muestre la distribución de los valores imputados frente a los datos originales.
+
+A continuación se muestran los gráficos para las variables `Trigliceridos` y `Colesterol`, que fueron imputadas:
+
+Para la variable Trigliceridos
+
+```{r}
+ggmice(data_imputada, aes(x = .imp, y = Trigliceridos)) +
+  geom_jitter(height = 0, width = 0.25) +
+  geom_boxplot(width = 0.5, size = 1, alpha = 0.55, outlier.shape = NA) +
+  labs(x = "Número de imputación")
+```
+
+El gráfico muestra cómo quedaron los valores de triglicéridos después de aplicar la imputación. La columna con el número 0 representa los datos reales que no estaban perdidos, y las columnas del 1 al 20 muestran los valores que se completaron en cada una de las 20 versiones del dataset
+
+Se puede ver que los valores imputados de color rosado tienen una forma muy parecida a los datos originales de color azul Las cajas están alineadas y tienen un rango similar, lo que significa que los valores completados no son muy diferentes a los que ya teníamos.
+
+Para la variable Colesterol
+
+```{r}
+ggmice(data_imputada, aes(x = .imp, y = Colesterol)) +
+  geom_jitter(height = 0, width = 0.25) +
+  geom_boxplot(width = 0.5, size = 1, alpha = 0.55, outlier.shape = NA) +
+  labs(x = "Número de imputación")
+```
+
+El gráfico muestra la distribución de los valores de colesterol antes y después de la imputación. La columna 0 representa los datos originales en azul y las columnas del 1 al 20 muestran los valores imputados en cada una de las 20 versiones del dataset en rosado
+
+A simple vista, los valores imputados siguen una forma parecida a los originales, con una concentración similar de datos. Sin embargo, se puede notar que en los datos originales hay más valores extremos (muy altos) que no se repiten con la misma frecuencia en los datos imputados. Esto puede deberse a que el método de imputación tiende a generar valores dentro de un rango más común o promedio, sin incluir tantos extremos
+
+Para datos categóricos, podemos crear una tabla de dos entradas comparando la distribución de la variable con datos completos e incompletos. Esto requiere primero crear la versión "long" de la data imputada.
+
+```{r}
+data_imputada_l <- complete(data_imputada, "long", include = TRUE)
+```
+
+Ahora la tabla.
+
+```{r}
+data_imputada_l <- data_imputada_l %>%
+  mutate(
+    imputado = .imp > 0,
+    imputado = factor(imputado, levels = c(FALSE, TRUE), labels = c("Observado", "Imputado"))
+  )
+
+prop.table(
+  table(data_imputada_l$Ascitis, data_imputada_l$imputado),
+  margin = 2
+)
+```
+
+Los resultados muestran la proporción de pacientes con y sin ascitis, comparando los datos originales con los valores que se imputaron.
+
+En los datos originales, el 92.3 por ciento de los pacientes no tenía ascitis y el 7.7 por ciento sí la tenía. En los datos imputados, el 91.1 por ciento no tenía ascitis y el 8.9 por ciento sí.
+
+Ambos grupos tienen porcentajes muy parecidos, lo que indica que la imputación se hizo de forma adecuada. Los valores completados siguen la misma distribución que los datos reales, por lo que se pueden considerar confiables
+
+### 5.1 Procedimientos adicionales luego de la imputación
+
+Después de imputar los datos, se puede realizar un análisis de regresión utilizando el objeto imputado directamente. En este caso, usaremos la función `with()` para ajustar un modelo de regresión logística sobre el objeto `data_imputada`. Como estamos utilizando el paquete `gtsummary`, no es necesario usar `pool()`, ya que este paquete maneja internamente la combinación de imputaciones.
+
+A continuación se muestra un ejemplo de regresión logística multivariada para predecir la presencia de **ascitis**, utilizando varias variables clínicas y bioquímicas:
+
+```{r}
+tabla_multi <- 
+  data_imputada |>
+  with(
+    glm(Ascitis ~ Edad + Sexo + Medicamento + Albumina + Bilirrubina +
+               Colesterol + Trigliceridos + SGOT + Etapa,
+        family = binomial(link = "logit"))
+  ) |>
+  tbl_regression(
+    exponentiate = TRUE,
+    label = list(
+      Sexo ~ "Sexo",
+      Medicamento ~ "Tratamiento",
+      Albumina ~ "Albúmina (g/dL)",
+      Bilirrubina ~ "Bilirrubina (mg/dL)",
+      Colesterol ~ "Colesterol (mg/dL)",
+      Trigliceridos ~ "Triglicéridos (mg/dL)",
+      SGOT ~ "SGOT",
+      Etapa ~ "Etapa clínica"
+    )
+  ) |>
+  bold_p(t = 0.05) |>
+  modify_header(
+    estimate = "**OR ajustado**", 
+    p.value = "**p valor**"
+  )
+```
+
+```{r}
+tabla_multi
+```
+
+Los resultados muestran que la albúmina y la bilirrubina son las variables más importantes. Los pacientes con niveles más altos de albúmina tienen menos probabilidad de tener ascitis. Esta relación es significativa, con un valor p menor a 0.001. Por otro lado, niveles más altos de bilirrubina están relacionados con un mayor riesgo de ascitis, también con una diferencia estadísticamente significativa.
+
+Las demás variables evaluadas, como edad, sexo, tipo de tratamiento, colesterol, triglicéridos, SGOT y la etapa clínica, no mostraron una relación significativa con la presencia de ascitis. En el caso de las etapas clínicas, aunque los valores de odds son muy altos, los intervalos son tan amplios que no permiten llegar a una conclusión clara, lo que puede deberse a que hay pocos casos en algunas categorías.
